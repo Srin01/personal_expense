@@ -1,46 +1,39 @@
 workflows:
-  ios-workflow:
-    name: ios_workflow
+  default-workflow:
+    name: Default Workflow
+    max_build_duration: 60
     environment:
-      vars:
-        XCODE_WORKSPACE: "YOUR_WORKSPACE_NAME.xcworkspace"  # PUT YOUR WORKSPACE NAME HERE
-        XCODE_SCHEME: "YOUR_SCHEME_NAME" # PUT THE NAME OF YOUR SCHEME HERE
-        FCI_CERTIFICATE: Encrypted(...) # PUT THE ENCRYPTED DISTRIBUTION CERTIFICATE HERE
-        FCI_CERTIFICATE_PASSWORD: Encrypted(...) # PUT THE ENCRYPTED CERTIFICATE PASSWORD HERE
-        FCI_PROVISIONING_PROFILE: Encrypted(...) # PUT THE ENCRYPTED PROVISIONING PROFILE HERE
+      flutter: stable
       xcode: latest
       cocoapods: default
-    triggering:
-      events:
-        - push
-      branch_patterns:
-        - pattern: master
-          include: true
-          source: true
     scripts:
-      - name: Set up keychain to be used for codesigning using Codemagic CLI 'keychain' command
-        script: keychain initialize
-      - name: Set up Provisioning profiles from environment variables
-        script: |
-          PROFILES_HOME="$HOME/Library/MobileDevice/Provisioning Profiles"
-          mkdir -p "$PROFILES_HOME"
-          PROFILE_PATH="$(mktemp "$PROFILES_HOME"/$(uuidgen).mobileprovision)"
-          echo ${FCI_PROVISIONING_PROFILE} | base64 --decode > "$PROFILE_PATH"
-          echo "Saved provisioning profile $PROFILE_PATH"
-      - name: Set up signing certificate
-        script: |
-          echo $FCI_CERTIFICATE | base64 --decode > /tmp/certificate.p12
-          keychain add-certificates --certificate /tmp/certificate.p12 --certificate-password $FCI_CERTIFICATE_PASSWORD
-      - name: Increment build number
-        script: agvtool new-version -all $(($BUILD_NUMBER +1))
-      - name: Set up code signing settings on Xcode project
-        script: xcode-project use-profiles
-      - name: Build ipa for distribution
-        script: xcode-project build-ipa --workspace "$XCODE_WORKSPACE" --scheme "$XCODE_SCHEME"
+      - |
+        # set up debug keystore
+        rm -f ~/.android/debug.keystore
+        keytool -genkeypair \
+          -alias androiddebugkey \
+          -keypass android \
+          -keystore ~/.android/debug.keystore \
+          -storepass android \
+          -dname 'CN=Android Debug,O=Android,C=US' \
+          -keyalg 'RSA' \
+          -keysize 2048 \
+          -validity 10000
+      - |
+        # set up local properties
+        echo "flutter.sdk=$HOME/programs/flutter" > "$FCI_BUILD_DIR/android/local.properties"
+      - flutter packages pub get
+      - flutter build apk --debug
+      - find . -name "Podfile" -execdir pod install \;
+      - flutter build ios --debug --no-codesign
     artifacts:
+      - build/**/outputs/**/*.apk
+      - build/**/outputs/**/*.aab
+      - build/**/outputs/**/mapping.txt
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
-      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+      - flutter_drive.log
     publishing:
-      app_store_connect:
-        apple_id: your_apple_id@example.com  # PUT YOUR APPLE ID HERE
+      email:
+        recipients:
+          - srinidhiprasad05@gmail.com
